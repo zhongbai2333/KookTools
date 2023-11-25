@@ -1,0 +1,13 @@
+{
+  "id": "kook_tools",
+  "version": "0.0.1",
+  "name": "KookTools",
+  "description": {
+    "en_us": "Useful Tools with Kook",
+    "zh_cn": "Kook 与 服务器 的实用工具"
+  },
+  "author": "zhongbai233",
+  "link": "https://github.com/zhongbai2333/KookTools",
+  "dependencies": {
+  }
+}

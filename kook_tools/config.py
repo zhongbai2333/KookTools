@@ -11,12 +11,23 @@ class AdminCommands(Serializable):
     whitelist: str = "whitelist"
 
 
+class Admins(Serializable):
+    admins: list[str] = []
+
+
+class Talk_group(Serializable):
+    talk_group: list[str] = []
+
+
+class ServerList(Serializable):
+    server_list: list[str] = []
+
+
 class Config(Serializable):
     uri: str = "https://www.kookapp.cn"
     api_version: int = 3
     token: str = ""
-    groups: List[int] = [11111111, 22222222]
-    admins: List[int] = [11111111, 22222222]
+    command_group: str = ""
     server_name: str = "Survival Server"
     main_server: bool = True
     whitelist_add_with_bound: bool = True

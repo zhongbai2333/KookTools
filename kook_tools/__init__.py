@@ -6,10 +6,10 @@ import requests
 import websockets
 from mcdreforged.api.all import *
 
-from .config import Config, Admins, Talk_group, ServerList
+from .config import Config, bot_data, BotMsg
 
 global __mcdr_server, config, debug_status, stop_status, sn, server_restart, session_id, heart_start, url, pong_back
-global heart_stop, server_start, fin_stop_status, wait_admin, admins, talk_group, server_list
+global heart_stop, server_start, fin_stop_status, wait_admin, botdata, botmsg, server_list_number, server_list_id
 
 
 # -------------------------
@@ -92,7 +92,7 @@ async def get_service(websocket):
                         __mcdr_server.logger.info(f"发起Resume！")
                     elif response_dict['s'] == 0:  # 返回离线期间未同步的数据
                         sn = response_dict['sn']  # 同步sn
-                        parse_get_msg(response_dict, "parse")
+                        parse_get_msg(response_dict)
                         __mcdr_server.logger.info(f"收到离线期间数据包！")
                     elif response_dict['s'] == 6:  # resume完成数据包
                         __mcdr_server.logger.info(f"Gateway重连成功！")
@@ -140,7 +140,7 @@ async def get_service(websocket):
                 break  # 退出机器人接收数据包系统以完全重新获取gateway地址
             elif response_dict['s'] == 0:  # 正常的event事件数据包
                 sn = response_dict['sn']  # 同步sn
-                parse_get_msg(response_dict, "parse")  # 将数据包转交给另一个线程处理数据
+                parse_get_msg(response_dict)  # 将数据包转交给另一个线程处理数据
         if server_restart or stop_status:  # 如果gateway重连信号启动或关服信号启动无需进行循环
             break  # 退出机器人接收数据包系统
 
@@ -183,42 +183,45 @@ async def bot_heart(websocket):
 # 机器人发送Get系统
 # 机器人event处理系统
 @new_thread('parse_get_msg')
-def parse_get_msg(msg, mode: str):
-    if mode == "parse":
-        if msg['d']['channel_type'] == "GROUP":
-            if debug_status:
-                __mcdr_server.logger.info(f"收到群聊消息！发送者：{msg['d']['extra']['author']['username']}"
+def parse_get_msg(msg) -> dict or str:
+    if msg['d']['channel_type'] == "GROUP":
+        if debug_status:
+            __mcdr_server.logger.info(f"收到群聊消息！发送者：{msg['d']['extra']['author']['username']}"
+                                      f"({msg['d']['author_id']}),"
+                                      f"于文字聊天室“{msg['d']['extra']['channel_name']}({msg['d']['target_id']})”发送，"
+                                      f"内容为：{msg['d']['content']}")
+        if (msg['d']['extra']['server_list'] in botdata.server_list and
+                msg['d']['target_id'] == config.command_group):
+            parse_group_command(msg['d']['content'], msg['d']['extra']['author']['username'], msg['d']['author_id'],
+                                msg['d']['target_id'])
+    elif msg['d']['channel_type'] == "PERSON":
+        if debug_status:
+            if msg['d']['type'] == 255:
+                __mcdr_server.logger.info(f"收到系统信息！")
+            else:
+                __mcdr_server.logger.info(f"收到私聊消息！发送者：{msg['d']['extra']['author']['username']}"
                                           f"({msg['d']['author_id']}),"
-                                          f"于文字聊天室“{msg['d']['extra']['channel_name']}({msg['d']['target_id']})”发送，"
+                                          f"于私聊({msg['d']['target_id']})发送，"
                                           f"内容为：{msg['d']['content']}")
-            if (msg['d']['extra']['server_list'] in server_list.server_list and
-                    msg['d']['target_id'] == config.command_group):
-                parse_group_command(msg['d']['content'], msg['d']['extra']['author']['username'], msg['d']['author_id'],
-                                    msg['d']['target_id'])
-        elif msg['d']['channel_type'] == "PERSON":
-            if debug_status:
-                if msg['d']['type'] == 255:
-                    __mcdr_server.logger.info(f"收到系统信息！")
-                else:
-                    __mcdr_server.logger.info(f"收到私聊消息！发送者：{msg['d']['extra']['author']['username']}"
-                                              f"({msg['d']['author_id']}),"
-                                              f"于私聊({msg['d']['target_id']})发送，"
-                                              f"内容为：{msg['d']['content']}")
+        if not msg['d']['extra']['author']['bot']:
             parse_person_command(msg['d']['content'], msg['d']['extra']['author']['username'], msg['d']['author_id'],
                                  msg['d']['target_id'])
-    elif mode == "get":
-        header = {"Authorization": f"Bot {config.token}"}  # 写入token
-        gateway_uri = f"/api/v{str(config.api_version)}"  # 写入api版本
-        # 发送请求
-        get = requests.get(config.uri + gateway_uri + msg, headers=header)
-        # 返回地址
-        if get.text:  # 检查是否回复
-            json_dict = json.loads(get.text)  # 转json字典解析
-            if debug_status:
-                __mcdr_server.logger.info(f"获取到的Get反馈：{json_dict}")
-            return json_dict  # 返回数据
-        else:
-            return ""
+
+
+# 处理Get请求
+def get_msg(msg) -> dict or str:
+    header = {"Authorization": f"Bot {config.token}"}  # 写入token
+    gateway_uri = f"/api/v{str(config.api_version)}"  # 写入api版本
+    # 发送请求
+    get = requests.get(config.uri + gateway_uri + msg, headers=header)
+    # 返回地址
+    if get.text:  # 检查是否回复
+        json_dict = json.loads(get.text)  # 转json字典解析
+        if debug_status:
+            __mcdr_server.logger.info(f"获取到的Get反馈：{json_dict}")
+        return json_dict  # 返回数据
+    else:
+        return ""
 
 
 # 发送消息
@@ -266,64 +269,105 @@ def parse_group_command(msg: str, username: str, userid: str, target_id: str):
     msg = msg.split(" ")
     if msg[0] == "help" or msg[0] == "帮助":
         __mcdr_server.logger.info("收到群聊帮助命令")
-        send_group_person_msg("看什么看？没见本大爷忙着吗！帮助你？纸条自己拿去看！", target_id, 0)
-        send_group_person_msg('''尾巴大爷拿出张纸条，上面写着：
-                help / 帮助 -- 获取帮助信息       
-                admin_help / 管理员帮助 -- 获取管理员帮助列表
-                ''', target_id, 0)
+        send_group_person_msg(botmsg.group_help, target_id, 0)
     else:
-        send_group_person_msg("有什么事？如果你开口“帮助”问问我说不定我会给你点提示", target_id, 1)
+        send_group_person_msg(botmsg.nothing_msg, target_id, 1)
 
 
 # 处理私聊命令
 def parse_person_command(msg: str, username: str, userid: str, target_id: str):
-    global wait_admin
+    global wait_admin, server_list_number, server_list_id
     msg = msg.split(" ")
     if msg[0] == "help" or msg[0] == "帮助":
         __mcdr_server.logger.info("收到私聊帮助命令")
-        send_group_person_msg("看什么看？没见本大爷忙着吗！帮助你？纸条自己拿去看！", userid, 0)
-        send_group_person_msg('''一张字条被贴在屏幕上，上面写着：
-        help / 帮助 -- 获取帮助信息       
-        get_admin / 获取管理员 -- 将当前用户添加至管理员（需后台验证）
-        admin_help / 管理员帮助 -- 获取管理员帮助列表
-        ''', userid, 0)
+        send_group_person_msg(botmsg.person_help, userid, 0)
     elif msg[0] == "admin_help" or msg[0] == "管理员帮助":
-        if userid in admins.admins:
-            send_group_person_msg(f"哼~ {username} ，管理员帮助列表自己拿去看", userid, 0)
-            send_group_person_msg('''一张字条被贴在屏幕上，上面写着：
-            set_server / 设置服务器 -- 获取机器人在的服务器并选择管理哪些
-            set_command_group / 设置频道组 -- 设置机器人需要处理命令的频道
-            set_talk_group / 设置聊天组 -- 设置机器人需要转发消息的频道
-            ''', userid, 0)
+        if userid in botdata.admins:
+            send_group_person_msg(botmsg.admin_person_help.format(username), userid, 0)
         else:
-            send_group_person_msg(f"哼~ {username} ，你是个屁管理员，滚！", userid, 0)
+            send_group_person_msg(botmsg.not_admin.format(username), userid, 0)
     elif msg[0] == "get_admin" or msg[0] == "获取管理员":
         __mcdr_server.logger.info(f"{username}({userid})正在获取管理员权限，使用命令 !!kt admin allow 确认其管理员身份！")
         wait_admin = userid
-        send_group_person_msg("去去去，去后台要权限吧！", userid, 0)
+        send_group_person_msg(botmsg.get_admin_msg, userid, 0)
+    elif msg[0] == "set_server" or msg[0] == "设置服务器":
+        if userid in botdata.admins:
+            if msg[1] == "list" or msg[1] == "列表":
+                server_list_id = []
+                server_list_number = 0
+                res = get_msg("/guild/list")
+                if res:
+                    if res['code'] == 0:
+                        send_group_person_msg(botmsg.found_server_list, userid, 0)
+                        for i in res['data']['items']:
+                            server_list_number += 1
+                            server_list_id.append(i['id'])
+                            send_group_person_msg(f"{server_list_number}. {i['name']}({i['id']})", userid, 0)
+                    else:
+                        send_group_person_msg(botmsg.cant_get_server_list, userid, 0)
+                else:
+                    send_group_person_msg(botmsg.cant_get_server_list, userid, 0)
+            if msg[1] == "add" or msg[1] == "添加":
+                if server_list_number != 0:
+                    if int(msg[2]) <= server_list_number:
+                        if not server_list_id[int(msg[2]) - 1] in botdata.server_list:
+                            add_server(server_list_id[int(msg[2]) - 1])
+                            send_group_person_msg(botmsg.add_server.format(server_list_id[int(msg[2]) - 1]), userid, 0)
+                        else:
+                            send_group_person_msg(botmsg.already_add_server.format(server_list_id[int(msg[2]) - 1]),
+                                                  userid, 0)
+                else:
+                    send_group_person_msg(botmsg.cant_found_server_list, userid, 0)
+        else:
+            send_group_person_msg(botmsg.not_admin.format(username), userid, 0)
     else:
-        send_group_person_msg(f"{username} 有什么事？如果你开口“帮助”问问我说不定我会给你点提示", userid, 0)
+        send_group_person_msg(botmsg.nothing_msg, userid, 0)
+
+
+# 添加机器人管理服务器
+def add_server(server_id: str):
+    global botdata
+    server_list = bot_data.server_list
+    server_list.append(server_id)
+    botdata_n = {
+        "server_list": server_list,
+        "admins": botdata.admins,
+        "talk_group": bot_data.talk_group,
+        "command_group": bot_data.command_group
+    }
+    __mcdr_server.save_config_simple(botdata_n, 'botdata.json')
+    botdata = __mcdr_server.load_config_simple('botdata.json', target_class=bot_data)
+    __mcdr_server.logger.info(f"已添加{server_id}为机器人管理服务器")
 
 
 # 添加机器人管理员
 def add_admin():
-    admins_list = admins.admins
+    global botdata
+    admins_list = bot_data.admins
     admins_list.append(wait_admin)
-    __mcdr_server.save_config_simple({'admins': admins_list}, 'admin.json')
+    botdata_n = {
+        "server_list": bot_data.server_list,
+        "admins": admins_list,
+        "talk_group": bot_data.talk_group,
+        "command_group": bot_data.command_group
+    }
+    __mcdr_server.save_config_simple(botdata_n, 'botdata.json')
+    botdata = __mcdr_server.load_config_simple('botdata.json', target_class=bot_data)
     __mcdr_server.logger.info("已为其获取Admin权限！")
 
 
 # 插件加载
 def on_load(server: PluginServerInterface, _):
-    global __mcdr_server, config, debug_status, stop_status, admins, talk_group, server_list
+    global __mcdr_server, config, debug_status, stop_status, botdata, botmsg, server_list_number, server_list_id
     # 变量初始化
     __mcdr_server = server  # 导入mcdr
     config = __mcdr_server.load_config_simple(target_class=Config)
-    admins = __mcdr_server.load_config_simple('admin.json', target_class=Admins)
-    talk_group = __mcdr_server.load_config_simple('TalkGroup.json', target_class=Talk_group)
-    server_list = __mcdr_server.load_config_simple('ServerList.json', target_class=ServerList)
+    botdata = __mcdr_server.load_config_simple('botdata.json', target_class=bot_data)
+    botmsg = __mcdr_server.load_config_simple('botmsg.json', target_class=BotMsg)
     debug_status = config.debug
     stop_status = False
+    server_list_number = 0
+    server_list_id = []
 
     # 命令初始化
     builder = SimpleCommandBuilder()

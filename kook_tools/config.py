@@ -27,6 +27,8 @@ class BotMsg(Serializable):
     cant_found_server_list: str = "未找到服务器列表，请先使用 设置服务器 列表 来获取服务器列表"
     add_server: str = "已添加{}为管理服务器！"
     already_add_server: str = "{}已是管理服务器！"
+    del_server: str = "已删除管理服务器{}！"
+    already_del_server: str = "{}不是已添加的服务器！"
 
 
 class bot_data(Serializable):

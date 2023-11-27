@@ -299,15 +299,27 @@ def parse_person_command(msg: str, username: str, userid: str, target_id: str):
                 if res:
                     if res['code'] == 0:
                         send_group_person_msg(botmsg.found_server_list, userid, 0)
+                        already_add_server_list = botdata.server_list
                         for i in res['data']['items']:
                             server_list_number += 1
                             server_list_id.append(i['id'])
-                            send_group_person_msg(f"{server_list_number}. {i['name']}({i['id']})", userid, 0)
+                            if i['id'] in already_add_server_list:
+                                send_group_person_msg(f"{server_list_number}. {i['name']}({i['id']})(已添加)", userid, 0)
+                                already_add_server_list.remove(i['id'])
+                            else:
+                                send_group_person_msg(f"{server_list_number}. {i['name']}({i['id']})", userid, 0)
+                        for i in already_add_server_list:
+                            server_list_number += 1
+                            server_list_id.append(i)
+                            res_name = get_msg(f"/guild/view?guild_id={i}")
+                            send_group_person_msg(f"{server_list_number}. {res_name['data']['name']}({i})(已添加)", userid,
+                                                  0)
+                            already_add_server_list.remove(i)
                     else:
                         send_group_person_msg(botmsg.cant_get_server_list, userid, 0)
                 else:
                     send_group_person_msg(botmsg.cant_get_server_list, userid, 0)
-            if msg[1] == "add" or msg[1] == "添加":
+            elif msg[1] == "add" or msg[1] == "添加":
                 if server_list_number != 0:
                     if int(msg[2]) <= server_list_number:
                         if not server_list_id[int(msg[2]) - 1] in botdata.server_list:
@@ -316,6 +328,16 @@ def parse_person_command(msg: str, username: str, userid: str, target_id: str):
                         else:
                             send_group_person_msg(botmsg.already_add_server.format(server_list_id[int(msg[2]) - 1]),
                                                   userid, 0)
+                else:
+                    send_group_person_msg(botmsg.cant_found_server_list, userid, 0)
+            elif msg[1] == "del" or msg[1] == "删除":
+                if server_list_number != 0:
+                    if server_list_id[int(msg[2]) - 1] in botdata.server_list:
+                        del_server(server_list_id[int(msg[2]) - 1])
+                        send_group_person_msg(botmsg.del_server.format(server_list_id[int(msg[2]) - 1]), userid, 0)
+                    else:
+                        send_group_person_msg(botmsg.already_del_server.format(server_list_id[int(msg[2]) - 1]),
+                                              userid, 0)
                 else:
                     send_group_person_msg(botmsg.cant_found_server_list, userid, 0)
         else:
@@ -329,6 +351,22 @@ def add_server(server_id: str):
     global botdata
     server_list = bot_data.server_list
     server_list.append(server_id)
+    botdata_n = {
+        "server_list": server_list,
+        "admins": botdata.admins,
+        "talk_group": bot_data.talk_group,
+        "command_group": bot_data.command_group
+    }
+    __mcdr_server.save_config_simple(botdata_n, 'botdata.json')
+    botdata = __mcdr_server.load_config_simple('botdata.json', target_class=bot_data)
+    __mcdr_server.logger.info(f"已添加{server_id}为机器人管理服务器")
+
+
+# 删除机器人管理服务器
+def del_server(server_id: str):
+    global botdata
+    server_list = bot_data.server_list
+    server_list.remove(server_id)
     botdata_n = {
         "server_list": server_list,
         "admins": botdata.admins,

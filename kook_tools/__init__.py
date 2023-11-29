@@ -266,7 +266,7 @@ def send_group_person_msg(msg: str, target_id: str, mode: int):
 
 # 处理群聊命令
 def parse_group_command(msg: str, username: str, userid: str, target_id: str):
-    msg = msg.split(" ")
+    msg = msg.split()
     if msg[0] == "help" or msg[0] == "帮助":
         __mcdr_server.logger.info("收到群聊帮助命令")
         send_group_person_msg(botmsg.group_help, target_id, 0)
@@ -277,7 +277,7 @@ def parse_group_command(msg: str, username: str, userid: str, target_id: str):
 # 处理私聊命令
 def parse_person_command(msg: str, username: str, userid: str, target_id: str):
     global wait_admin, server_list_number, server_list_id
-    msg = msg.split(" ")
+    msg = msg.split()
     if msg[0] == "help" or msg[0] == "帮助":
         __mcdr_server.logger.info("收到私聊帮助命令")
         send_group_person_msg(botmsg.person_help, userid, 0)

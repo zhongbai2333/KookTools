@@ -29,6 +29,9 @@ class BotMsg(Serializable):
     already_add_server: str = "{}已是管理服务器！"
     del_server: str = "已删除管理服务器{}！"
     already_del_server: str = "{}不是已添加的服务器！"
+    add_server_help: str = "命令错误！请使用 设置服务器 添加 <number>"
+    del_server_help: str = "命令错误！请使用 设置服务器 删除 <number>"
+    at_msg: str = "如果需要添加为聊天组请用 添加聊天组，如果需要添加为命令组请用 添加命令组"
 
 
 class bot_data(Serializable):

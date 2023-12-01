@@ -31,7 +31,12 @@ class BotMsg(Serializable):
     already_del_server: str = "{}不是已添加的服务器！"
     add_server_help: str = "命令错误！请使用 设置服务器 添加 <number>"
     del_server_help: str = "命令错误！请使用 设置服务器 删除 <number>"
-    at_msg: str = "如果需要添加为聊天组请用 添加聊天组，如果需要添加为命令组请用 添加命令组"
+    at_msg: str = "如果需要添加为聊天组请用 添加聊天组，如果需要添加为命令组请用 添加命令组({})"
+    del_talk_group: str = "已删除此频道({})为聊天组！"
+    add_talk_group: str = "已添加此频道({})为聊天组！"
+    del_command_group: str = "已删除此频道({})为命令组！"
+    add_command_group: str = "已添加此频道({})为命令组！"
+    already_add_command_group: str = "命令组频道只能有一个！({})"
 
 
 class bot_data(Serializable):

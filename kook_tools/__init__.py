@@ -209,8 +209,7 @@ def parse_get_msg(msg) -> dict or str:
                                           f"于私聊({msg['d']['target_id']})发送，"
                                           f"内容为：{msg['d']['content']}")
         if not msg['d']['extra']['author']['bot']:
-            parse_person_command(msg['d']['content'], msg['d']['extra']['author']['username'], msg['d']['author_id'],
-                                 msg['d']['target_id'])
+            parse_person_command(msg['d']['content'], msg['d']['extra']['author']['username'], msg['d']['author_id'])
 
 
 # 处理Get请求
@@ -271,19 +270,56 @@ def send_group_person_msg(msg: str, target_id: str, mode: int):
 
 # 处理群聊命令
 def parse_group_command(msg: str, username: str, userid: str, target_id: str):
-    if target_id in botdata.command_group:
-        msg = msg.split()
-        if msg[0] == "help" or msg[0] == "帮助":
-            send_group_person_msg(botmsg.group_help, target_id, 0)
+    msg_c = msg.split()
+    if (target_id in botdata.talk_group and target_id in botdata.command_group
+            and userid != botid and msg_c[0] != "(met)"+botid+"(met)"):
+        if target_id in botdata.talk_group and target_id in botdata.command_group:
+            if msg[0] == "#":
+                msg_c = msg[1:].split()
+                if msg_c[0] == "help" or msg_c[0] == "帮助":
+                    send_group_person_msg(botmsg.group_help, target_id, 1)
+            else:
+                __mcdr_server.logger.info("_________________")
+        elif target_id in botdata.talk_group:
+            __mcdr_server.logger.info("_________________")
+        elif target_id in botdata.command_group:
+            if msg_c[0] == "help" or msg_c[0] == "帮助":
+                send_group_person_msg(botmsg.group_help, target_id, 1)
+    elif msg_c[0] == "(met)"+botid+"(met)" and len(msg_c) <= 1:
+        if target_id in botdata.command_group and target_id in botdata.talk_group:
+            send_group_person_msg(botmsg.at_msg.format("已添加聊天组和命令组"), target_id, 1)
+        elif target_id in botdata.command_group:
+            send_group_person_msg(botmsg.at_msg.format("已添加命令组"), target_id, 1)
+        elif target_id in botdata.talk_group:
+            send_group_person_msg(botmsg.at_msg.format("已添加聊天组"), target_id, 1)
         else:
-            send_group_person_msg(botmsg.nothing_msg, target_id, 1)
-    else:
-        if msg[:len(botid) + 10] == "(met)"+botid+"(met)":
-            send_group_person_msg(botmsg.at_msg, target_id, 1)
+            send_group_person_msg(botmsg.at_msg.format("未添加为任何组"), target_id, 1)
+    elif msg_c[0] == "(met)" + botid + "(met)" and len(msg_c) > 1:
+        if userid in botdata.admins:
+            if msg_c[1] == "设置聊天组" or msg_c[1] == "set_talk_group":
+                if target_id in botdata.talk_group:
+                    save_botdata("talk_group", target_id, False)
+                    send_group_person_msg(botmsg.del_talk_group.format(target_id), target_id, 1)
+                else:
+                    save_botdata("talk_group", target_id, True)
+                    send_group_person_msg(botmsg.add_talk_group.format(target_id), target_id, 1)
+            elif msg_c[1] == "设置命令组" or msg_c[1] == "set_command_group":
+                if target_id == botdata.command_group:
+                    save_botdata("command_group", target_id, False)
+                    send_group_person_msg(botmsg.del_command_group.format(target_id), target_id, 1)
+                else:
+                    if botdata.command_group:
+                        send_group_person_msg(botmsg.already_add_command_group.format(botdata.command_group),
+                                              target_id, 1)
+                    else:
+                        save_botdata("command_group", target_id, True)
+                        send_group_person_msg(botmsg.add_command_group.format(target_id), target_id, 1)
+        else:
+            send_group_person_msg(botmsg.not_admin.format(username), target_id, 1)
 
 
 # 处理私聊命令
-def parse_person_command(msg: str, username: str, userid: str, target_id: str):
+def parse_person_command(msg: str, username: str, userid: str):
     global wait_admin, server_list_number, server_list_id
     msg = msg.split()
     if msg[0] == "help" or msg[0] == "帮助":
@@ -330,7 +366,7 @@ def parse_person_command(msg: str, username: str, userid: str, target_id: str):
                 if server_list_number != 0:
                     if int(msg[2]) <= server_list_number:
                         if not server_list_id[int(msg[2]) - 1] in botdata.server_list:
-                            add_server(server_list_id[int(msg[2]) - 1])
+                            save_botdata("server_list", server_list_id[int(msg[2]) - 1], True)
                             send_group_person_msg(botmsg.add_server.format(server_list_id[int(msg[2]) - 1]), userid, 0)
                         else:
                             send_group_person_msg(botmsg.already_add_server.format(server_list_id[int(msg[2]) - 1]),
@@ -342,7 +378,7 @@ def parse_person_command(msg: str, username: str, userid: str, target_id: str):
             elif len(msg) == 3 and msg[1] == "del" or msg[1] == "删除":
                 if server_list_number != 0:
                     if server_list_id[int(msg[2]) - 1] in botdata.server_list:
-                        del_server(server_list_id[int(msg[2]) - 1])
+                        save_botdata("server_list", server_list_id[int(msg[2]) - 1], False)
                         send_group_person_msg(botmsg.del_server.format(server_list_id[int(msg[2]) - 1]), userid, 0)
                     else:
                         send_group_person_msg(botmsg.already_del_server.format(server_list_id[int(msg[2]) - 1]),
@@ -359,13 +395,24 @@ def parse_person_command(msg: str, username: str, userid: str, target_id: str):
         send_group_person_msg(botmsg.nothing_msg, userid, 0)
 
 
-# 添加机器人管理服务器
-def add_server(server_id: str):
+# 修改Botdata
+def save_botdata(option: str, input_sth: str, add: bool = False):
     global botdata
-    __mcdr_server.logger.info(f"正在添加{server_id}为机器人管理服务器")
-    if debug_status:
-        __mcdr_server.logger.info(botdata.server_list)
-    botdata.server_list.append(server_id)
+    if option == "command_group":
+        if add:
+            botdata.command_group = input_sth
+        else:
+            botdata.command_group = ""
+    elif option == "talk_group":
+        if add:
+            botdata.talk_group.append(input_sth)
+        else:
+            botdata.talk_group.remove(input_sth)
+    elif option == "server_list":
+        if add:
+            botdata.server_list.append(input_sth)
+        else:
+            botdata.server_list.remove(input_sth)
     botdata_n = {
         "server_list": botdata.server_list,
         "admins": botdata.admins,
@@ -374,25 +421,6 @@ def add_server(server_id: str):
     }
     __mcdr_server.save_config_simple(botdata_n, 'botdata.json')
     botdata = __mcdr_server.load_config_simple('botdata.json', target_class=bot_data)
-    __mcdr_server.logger.info(f"已添加{server_id}为机器人管理服务器")
-
-
-# 删除机器人管理服务器
-def del_server(server_id: str):
-    global botdata
-    __mcdr_server.logger.info(f"正在删除{server_id}为机器人管理服务器")
-    if debug_status:
-        __mcdr_server.logger.info(botdata.server_list)
-    botdata.server_list.remove(server_id)
-    botdata_n = {
-        "server_list": botdata.server_list,
-        "admins": botdata.admins,
-        "talk_group": botdata.talk_group,
-        "command_group": botdata.command_group
-    }
-    __mcdr_server.save_config_simple(botdata_n, 'botdata.json')
-    botdata = __mcdr_server.load_config_simple('botdata.json', target_class=bot_data)
-    __mcdr_server.logger.info(f"已删除{server_id}为机器人管理服务器")
 
 
 # 添加机器人管理员

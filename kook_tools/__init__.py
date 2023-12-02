@@ -2,16 +2,50 @@ import asyncio
 import json
 import time
 import copy
+import re
+
+try:  # 试图导入mysql处理
+    import mysql.connector
+except ImportError:
+    mysql = None
 
 import requests
 import websockets
 from mcdreforged.api.all import *
 
-from .config import Config, bot_data, BotMsg
+from .config import Config, bot_data, BotMsg, Commands
+from .MySQL_Control import (connect_and_delete_data, connect_and_query_db, connect_and_insert_db,
+                            create_table_if_not_exists)
 
 global __mcdr_server, config, debug_status, stop_status, sn, server_restart, session_id, heart_start, url, pong_back
 global heart_stop, server_start, fin_stop_status, wait_admin, botdata, botmsg, server_list_number, server_list_id
-global botid, botname
+global botid, botname, data, online_players, commands, wait_list
+
+global group_help, person_help, admin_person_help, set_server_help, t_and_c_group_help
+
+
+# -------------------------
+# Help editor event listener
+# -------------------------
+def make_help_msg():
+    global group_help, person_help, admin_person_help, set_server_help, t_and_c_group_help
+    group_help = f'''
+        {" / ".join(commands.help[0])} -- {commands.help[1]}
+        {" / ".join(commands.admin_help[0])} -- {commands.admin_help[1]}'''
+    t_and_c_group_help = f'''
+        {config.command_prefix}{f" / {config.command_prefix}".join(commands.help[0])} -- {commands.help[1]}
+        {config.command_prefix}{f" / {config.command_prefix}".join(commands.admin_help[0])} -- {commands.admin_help[1]}
+        '''
+    person_help = f'''
+        {" / ".join(commands.help[0])} -- {commands.help[1]}
+        {" / ".join(commands.admin_help[0])} -- {commands.admin_help[1]}
+        {" / ".join(commands.get_admin[0])} -- {commands.get_admin[1]}'''
+    admin_person_help = f'''
+        {" / ".join(commands.set_server[0])} -- {commands.set_server[1]}'''
+    set_server_help = f'''
+        {" / ".join(commands.set_server_list[0])} -- {commands.set_server_list[1]}
+        {" / ".join(commands.set_server_add[0])} -- {commands.set_server_add[1]}
+        {" / ".join(commands.set_server_del[0])} -- {commands.set_server_del[1]}'''
 
 
 # -------------------------
@@ -187,6 +221,9 @@ async def bot_heart(websocket):
                 break
 
 
+# -------------------------
+# Parse msg event listener
+# -------------------------
 # 机器人event处理系统
 @new_thread('parse_get_msg')
 def parse_get_msg(msg) -> dict or str:
@@ -208,8 +245,9 @@ def parse_get_msg(msg) -> dict or str:
                                           f"({msg['d']['author_id']}),"
                                           f"于私聊({msg['d']['target_id']})发送，"
                                           f"内容为：{msg['d']['content']}")
-        if not msg['d']['extra']['author']['bot']:
-            parse_person_command(msg['d']['content'], msg['d']['extra']['author']['username'], msg['d']['author_id'])
+                if not msg['d']['extra']['author']['bot']:
+                    parse_person_command(msg['d']['content'], msg['d']['extra']['author']['username'],
+                                         msg['d']['author_id'])
 
 
 # 处理Get请求
@@ -233,14 +271,14 @@ def send_group_person_msg(msg: str, target_id: str, mode: int):
     if mode == 0:  # person
         if debug_status:
             __mcdr_server.logger.info(f"发送到私聊({target_id})：{msg}")
-        data = {
+        data_send = {
             "target_id": target_id,
             "content": msg
         }
         header = {"Authorization": f"Bot {config.token}"}  # 写入token
         gateway_uri = f"/api/v{str(config.api_version)}"  # 写入api版本
         uri_p = "/direct-message/create"
-        post = requests.post(url=config.uri + gateway_uri + uri_p, json=data, headers=header)
+        post = requests.post(url=config.uri + gateway_uri + uri_p, json=data_send, headers=header)
         json_dict = json.loads(post.text)  # 转json字典解析
         if debug_status:
             __mcdr_server.logger.info(f"获取的Post回复：{json_dict}")
@@ -251,14 +289,14 @@ def send_group_person_msg(msg: str, target_id: str, mode: int):
     elif mode == 1:  # group
         if debug_status:
             __mcdr_server.logger.info(f"发送到群聊({target_id})：{msg}")
-        data = {
+        data_send = {
             "target_id": target_id,
             "content": msg
         }
         header = {"Authorization": f"Bot {config.token}"}  # 写入token
         gateway_uri = f"/api/v{str(config.api_version)}"  # 写入api版本
         uri_p = "/message/create"
-        post = requests.post(url=config.uri + gateway_uri + uri_p, json=data, headers=header)
+        post = requests.post(url=config.uri + gateway_uri + uri_p, json=data_send, headers=header)
         json_dict = json.loads(post.text)  # 转json字典解析
         if debug_status:
             __mcdr_server.logger.info(f"获取的Post回复：{json_dict}")
@@ -271,40 +309,57 @@ def send_group_person_msg(msg: str, target_id: str, mode: int):
 # 处理群聊命令
 def parse_group_command(msg: str, username: str, userid: str, target_id: str):
     msg_c = msg.split()
-    if (target_id in botdata.talk_group and target_id in botdata.command_group
-            and userid != botid and msg_c[0] != "(met)"+botid+"(met)"):
+    if userid != botid and msg_c[0] != "(met)" + botid + "(met)":
         if target_id in botdata.talk_group and target_id in botdata.command_group:
-            if msg[0] == "#":
+            if msg[0] == config.command_prefix:
                 msg_c = msg[1:].split()
-                if msg_c[0] == "help" or msg_c[0] == "帮助":
-                    send_group_person_msg(botmsg.group_help, target_id, 1)
+                if msg_c[0] in commands.help[0]:
+                    send_group_person_msg(botmsg.group_help.format(t_and_c_group_help), target_id, 1)
+                elif msg_c[0] in commands.bound and len(msg_c) == 2:
+                    bound_player(userid, msg_c, target_id)
+                elif msg_c[0] in commands.bound and len(msg_c) != 2:
+                    send_group_person_msg(botmsg.bound_error.format(config.command_prefix +
+                                                                    f" / {config.command_prefix}".join(commands.bound)),
+                                          target_id, 1)
             else:
-                __mcdr_server.logger.info("_________________")
+                turn_msg(userid, target_id, msg, True)
         elif target_id in botdata.talk_group:
-            __mcdr_server.logger.info("_________________")
+            turn_msg(userid, target_id, msg, False)
         elif target_id in botdata.command_group:
-            if msg_c[0] == "help" or msg_c[0] == "帮助":
-                send_group_person_msg(botmsg.group_help, target_id, 1)
-    elif msg_c[0] == "(met)"+botid+"(met)" and len(msg_c) <= 1:
+            if msg_c[0] in commands.help[0]:
+                send_group_person_msg(botmsg.group_help.format(group_help), target_id, 1)
+            elif msg_c[0] in commands.bound and len(msg_c) == 2:
+                bound_player(userid, msg_c, target_id)
+            elif msg_c[0] in commands.bound and len(msg_c) != 2:
+                send_group_person_msg(botmsg.bound_error.format(" / ".join(commands.bound)), target_id, 1)
+    elif msg_c[0] == "(met)" + botid + "(met)" and len(msg_c) <= 1:
         if target_id in botdata.command_group and target_id in botdata.talk_group:
-            send_group_person_msg(botmsg.at_msg.format("已添加聊天组和命令组"), target_id, 1)
+            send_group_person_msg(botmsg.at_msg.format(" / ".join(commands.set_talk_group[0]),
+                                                       " / ".join(commands.set_command_group[0]),
+                                                       "已添加为聊天组和命令组"), target_id, 1)
         elif target_id in botdata.command_group:
-            send_group_person_msg(botmsg.at_msg.format("已添加命令组"), target_id, 1)
+            send_group_person_msg(botmsg.at_msg.format(" / ".join(commands.set_talk_group[0]),
+                                                       " / ".join(commands.set_command_group[0]),
+                                                       "已添加为命令组"), target_id, 1)
         elif target_id in botdata.talk_group:
-            send_group_person_msg(botmsg.at_msg.format("已添加聊天组"), target_id, 1)
+            send_group_person_msg(botmsg.at_msg.format(" / ".join(commands.set_talk_group[0]),
+                                                       " / ".join(commands.set_command_group[0]),
+                                                       "已添加为聊天组"), target_id, 1)
         else:
-            send_group_person_msg(botmsg.at_msg.format("未添加为任何组"), target_id, 1)
+            send_group_person_msg(botmsg.at_msg.format(" / ".join(commands.set_talk_group[0]),
+                                                       " / ".join(commands.set_command_group[0]),
+                                                       "未添加为任何组"), target_id, 1)
     elif msg_c[0] == "(met)" + botid + "(met)" and len(msg_c) > 1:
         if userid in botdata.admins:
-            if msg_c[1] == "设置聊天组" or msg_c[1] == "set_talk_group":
+            if msg_c[1] in commands.set_talk_group[0]:
                 if target_id in botdata.talk_group:
                     save_botdata("talk_group", target_id, False)
                     send_group_person_msg(botmsg.del_talk_group.format(target_id), target_id, 1)
                 else:
                     save_botdata("talk_group", target_id, True)
                     send_group_person_msg(botmsg.add_talk_group.format(target_id), target_id, 1)
-            elif msg_c[1] == "设置命令组" or msg_c[1] == "set_command_group":
-                if target_id == botdata.command_group:
+            elif msg_c[1] in commands.set_command_group:
+                if target_id == botdata.command_group[0]:
                     save_botdata("command_group", target_id, False)
                     send_group_person_msg(botmsg.del_command_group.format(target_id), target_id, 1)
                 else:
@@ -318,36 +373,136 @@ def parse_group_command(msg: str, username: str, userid: str, target_id: str):
             send_group_person_msg(botmsg.not_admin.format(username), target_id, 1)
 
 
+# bound系统
+def bound_player(userid: str, msg_c: list, target_id: str):
+    user_list = get_user_list()
+    if userid in user_list.keys():  # 检测玩家是否已经绑定
+        send_group_person_msg(botmsg.already_bound.format("(met)" + userid + "(met)",
+                                                          user_list[userid]), target_id, 1)
+    elif msg_c[1] in user_list.values():  # 查看id是否已存在
+        player_id_qq = list(user_list.keys())[list(user_list.values()).index(msg_c[1])]
+        send_group_person_msg(botmsg.already_be_bound.format("(met)" + userid + "(met)",
+                                                             user_list[userid], "(met)" + player_id_qq + "(met)"),
+                              target_id, 1)
+    else:
+        if real_name(msg_c[1]) or not config.online_mode:
+            if send_user_list(userid, msg_c[1]):  # 进行绑定
+                if config.whitelist_add_with_bound:  # 是否添加白名单
+                    send_execute_mc(f'whitelist add {msg_c[1]}')
+                    send_group_person_msg(botmsg.fin_bound.format("(met)" + userid + "(met)"), target_id, 1)
+                else:
+                    send_execute_mc(f'whitelist reload')
+                    send_group_person_msg(botmsg.fin_bound_without_whitelist.format("(met)" + userid + "(met)",
+                                                                                    config.why_no_whitelist),
+                                          target_id, 1)
+            else:
+                send_group_person_msg(botmsg.error_player_name.format("(met)" + userid + "(met)"), target_id, 1)
+        else:
+            send_group_person_msg(botmsg.worng_player_name.format("(met)" + userid + "(met)"), target_id, 1)
+
+
+# 消息转发处理
+def turn_msg(userid: str, target_id: str, msg: str, command_talk: bool):
+    user_list = get_user_list()
+    if userid in user_list.keys():
+        __mcdr_server.say(f"§7[QQ][{user_list[userid]}] {msg}")  # 转发消息
+    else:
+        if command_talk:
+            send_group_person_msg(botmsg.need_bound.format(f"(met){userid}(met)",
+                                                           config.command_prefix +
+                                                           f" / {config.command_prefix}".join(commands.bound[0])),
+                                  target_id, 1)
+        else:
+            send_group_person_msg(botmsg.need_bound.format(f"(met){userid}(met)", " / ".join(commands.bound[0])),
+                                  target_id, 1)
+
+
+# 整合获取用户
+def get_user_list():
+    if config.mysql_enable:
+        return dict(connect_and_query_db("kook_id,player_id", "user_list", config.mysql_config))
+    else:
+        return data
+
+
+# 检测玩家名是否存在
+def real_name(username: str):
+    # 定义Minecraft API的URL
+    url_m = "https://api.mojang.com/users/profiles/minecraft/{}"
+    # 发送GET请求到Minecraft API
+    response = requests.get(url_m.format(username))
+
+    # 检查响应状态码
+    if response.status_code == 200:
+        # 如果状态码为200，则表示玩家用户名存在
+        return True
+    else:
+        # 如果状态码不为200，则表示玩家用户名不存在
+        return False
+
+
+# 整合绑定用户
+def send_user_list(send_id: str, name: str):
+    pattern = r'[^a-zA-Z0-9_]'
+    if not re.search(pattern, name):
+        if config.mysql_enable:
+            if config.main_server:
+                db_data = (send_id, name)
+                connect_and_insert_db("kook_id,player_id", "user_list", db_data, config.mysql_config)
+                return True
+            return True
+        else:
+            data[send_id] = name  # 进行绑定
+            save_data(__mcdr_server)
+            return True
+    else:
+        return False
+
+
+# 把命令执行独立出来，以防服务器处在待机状态
+def send_execute_mc(command: str):
+    global wait_list
+    if __mcdr_server.is_server_running():  # 确认服务器是否启动
+        __mcdr_server.execute(command)
+        __mcdr_server.logger.info(f"QQTools execute:{command}")
+    else:
+        wait_list.append(command)  # 堆着等开服
+        __mcdr_server.logger.info(f"QQTools can't execute:{command}, The list of commands:{str(wait_list)}")
+
+
 # 处理私聊命令
 def parse_person_command(msg: str, username: str, userid: str):
     global wait_admin, server_list_number, server_list_id
     msg = msg.split()
-    if msg[0] == "help" or msg[0] == "帮助":
-        send_group_person_msg(botmsg.person_help, userid, 0)
-    elif msg[0] == "admin_help" or msg[0] == "管理员帮助":
+    if msg[0] in commands.help[0]:
+        send_group_person_msg(botmsg.person_help.format(person_help), userid, 0)
+    elif msg[0] in commands.admin_help[0]:
         if userid in botdata.admins:
-            send_group_person_msg(botmsg.admin_person_help.format(username), userid, 0)
+            send_group_person_msg(botmsg.admin_person_help.format(username, admin_person_help), userid, 0)
         else:
             send_group_person_msg(botmsg.not_admin.format(username), userid, 0)
-    elif msg[0] == "get_admin" or msg[0] == "获取管理员":
+    elif msg[0] in commands.get_admin[0]:
         __mcdr_server.logger.info(f"{username}({userid})正在获取管理员权限，使用命令 !!kt admin allow 确认其管理员身份！")
         wait_admin = userid
         send_group_person_msg(botmsg.get_admin_msg, userid, 0)
-    elif msg[0] == "set_server" or msg[0] == "设置服务器":
+    elif msg[0] in commands.set_server[0] and len(msg) > 1:
         if userid in botdata.admins:
-            if msg[1] == "list" or msg[1] == "列表":
+            if msg[1] in commands.set_server_list[0]:
                 server_list_id = []
                 server_list_number = 0
                 res = get_msg("/guild/list")
                 if res:
                     if res['code'] == 0:
-                        send_group_person_msg(botmsg.found_server_list, userid, 0)
+                        send_group_person_msg(botmsg.found_server_list.format(" / ".join(commands.set_server[0]),
+                                                                              " / ".join(commands.set_server_add[0])),
+                                              userid, 0)
                         already_add_server_list = copy.copy(botdata.server_list)
                         for i in res['data']['items']:
                             server_list_number += 1
                             server_list_id.append(i['id'])
                             if i['id'] in already_add_server_list:
-                                send_group_person_msg(f"{server_list_number}. {i['name']}({i['id']})(已添加)", userid, 0)
+                                send_group_person_msg(f"{server_list_number}. {i['name']}({i['id']})(已添加)", userid,
+                                                      0)
                                 already_add_server_list.remove(i['id'])
                             else:
                                 send_group_person_msg(f"{server_list_number}. {i['name']}({i['id']})", userid, 0)
@@ -355,14 +510,15 @@ def parse_person_command(msg: str, username: str, userid: str):
                             server_list_number += 1
                             server_list_id.append(i)
                             res_name = get_msg(f"/guild/view?guild_id={i}")
-                            send_group_person_msg(f"{server_list_number}. {res_name['data']['name']}({i})(已添加)", userid,
+                            send_group_person_msg(f"{server_list_number}. {res_name['data']['name']}({i})(已添加)",
+                                                  userid,
                                                   0)
                             already_add_server_list.remove(i)
                     else:
                         send_group_person_msg(botmsg.cant_get_server_list, userid, 0)
                 else:
                     send_group_person_msg(botmsg.cant_get_server_list, userid, 0)
-            elif len(msg) == 3 and msg[1] == "add" or msg[1] == "添加":
+            elif len(msg) == 3 and msg[1] in commands.set_server_add[0]:
                 if server_list_number != 0:
                     if int(msg[2]) <= server_list_number:
                         if not server_list_id[int(msg[2]) - 1] in botdata.server_list:
@@ -372,10 +528,14 @@ def parse_person_command(msg: str, username: str, userid: str):
                             send_group_person_msg(botmsg.already_add_server.format(server_list_id[int(msg[2]) - 1]),
                                                   userid, 0)
                 else:
-                    send_group_person_msg(botmsg.cant_found_server_list, userid, 0)
-            elif len(msg) != 3 and msg[1] == "add" or msg[1] == "添加":
-                send_group_person_msg(botmsg.add_server_help, userid, 0)
-            elif len(msg) == 3 and msg[1] == "del" or msg[1] == "删除":
+                    send_group_person_msg(botmsg.cant_found_server_list.format(" / ".join(commands.set_server[0]),
+                                                                               " / ".join(commands.set_server_list[0])),
+                                          userid, 0)
+            elif len(msg) != 3 and msg[1] in commands.set_server_add[0]:
+                send_group_person_msg(botmsg.add_server_help.format(" / ".join(commands.set_server[0]),
+                                                                    " / ".join(commands.set_server_add[0])),
+                                      userid, 0)
+            elif len(msg) == 3 and msg[1] in commands.set_server_del[0]:
                 if server_list_number != 0:
                     if server_list_id[int(msg[2]) - 1] in botdata.server_list:
                         save_botdata("server_list", server_list_id[int(msg[2]) - 1], False)
@@ -384,17 +544,26 @@ def parse_person_command(msg: str, username: str, userid: str):
                         send_group_person_msg(botmsg.already_del_server.format(server_list_id[int(msg[2]) - 1]),
                                               userid, 0)
                 else:
-                    send_group_person_msg(botmsg.cant_found_server_list, userid, 0)
-            elif len(msg) != 3 and msg[1] == "del" or msg[1] == "删除":
-                send_group_person_msg(botmsg.del_server_help, userid, 0)
+                    send_group_person_msg(botmsg.cant_found_server_list.format(" / ".join(commands.set_server[0]),
+                                                                               " / ".join(commands.set_server_list[0])),
+                                          userid, 0)
+            elif len(msg) != 3 and msg[1] in commands.set_server_del[0]:
+                send_group_person_msg(botmsg.del_server_help.format(" / ".join(commands.set_server[0]),
+                                                                    " / ".join(commands.set_server_del[0])),
+                                      userid, 0)
             else:
                 send_group_person_msg(botmsg.person_help, userid, 0)
         else:
             send_group_person_msg(botmsg.not_admin.format(username), userid, 0)
+    elif msg[0] in commands.set_server[0] and len(msg) == 1:
+        send_group_person_msg(botmsg.help_set_server.format(set_server_help), userid, 0)
     else:
-        send_group_person_msg(botmsg.nothing_msg, userid, 0)
+        send_group_person_msg(botmsg.nothing_msg.format(" / ".join(commands.help[0])), userid, 0)
 
 
+# -------------------------
+# Config editor event listener
+# -------------------------
 # 修改Botdata
 def save_botdata(option: str, input_sth: str, add: bool = False):
     global botdata
@@ -440,18 +609,31 @@ def add_admin():
     __mcdr_server.logger.info("已为其获取Admin权限！")
 
 
+# 保存data
+def save_data(server: PluginServerInterface):
+    server.save_config_simple({'data': data}, 'data.json')
+
+
+# -------------------------
+# MCDR event listener
+# -------------------------
 # 插件加载
 def on_load(server: PluginServerInterface, _):
-    global __mcdr_server, config, debug_status, stop_status, botdata, botmsg, server_list_number, server_list_id
+    global __mcdr_server, config, debug_status, stop_status, botdata, botmsg, server_list_number, server_list_id, data
+    global online_players, commands, wait_list
     # 变量初始化
     __mcdr_server = server  # 导入mcdr
     config = __mcdr_server.load_config_simple(target_class=Config)
     botdata = __mcdr_server.load_config_simple('botdata.json', target_class=bot_data)
     botmsg = __mcdr_server.load_config_simple('botmsg.json', target_class=BotMsg)
+    commands = __mcdr_server.load_config_simple('commands.json', target_class=Commands)
     debug_status = config.debug
     stop_status = False
     server_list_number = 0
     server_list_id = []
+    online_players = []
+    wait_list = []
+    make_help_msg()
 
     # 命令初始化
     builder = SimpleCommandBuilder()
@@ -460,10 +642,29 @@ def on_load(server: PluginServerInterface, _):
     # done, now register the commands to the server
     builder.register(server)
 
-    # 主服务器启动
-    if config.main_server:
-        __mcdr_server.logger.info("机器人正在启动……")
-        start_kook_bot()
+    if not config.mysql_enable:
+        data = server.load_config_simple(
+            'data.json',
+            default_config={'data': {}},
+            echo_in_console=False
+        )['data']
+
+    if not config.mysql_enable:  # 未开启mysql功能
+        # 主服务器启动
+        if config.main_server:
+            __mcdr_server.logger.info("机器人正在启动……")
+            start_kook_bot()
+    elif config.mysql_enable and mysql:  # 启用mysql功能且mysql-connector-python已安装
+        MySQL_Control.create_table_if_not_exists("user_list", "id INT AUTO_INCREMENT PRIMARY KEY,kook_id VARCHAR(15),"
+                                                              "player_id VARCHAR(20),event_time TIMESTAMP DEFAULT "
+                                                              "CURRENT_TIMESTAMP", config.mysql_config)
+        __mcdr_server.logger.info("MySQL数据库功能已正常启动！")
+        # 主服务器启动
+        if config.main_server:
+            __mcdr_server.logger.info("机器人正在启动……")
+            start_kook_bot()
+    elif config.mysql_enable and not mysql:
+        __mcdr_server.logger.error("KookTools无法启动，请安装mysql-connector-python或关闭数据库功能！")
 
 
 # 插件卸载
@@ -473,3 +674,33 @@ def on_unload(_):
     __mcdr_server.logger.info("机器人开始关闭，正在等待关闭成功信号……")
     while not fin_stop_status:
         time.sleep(0.5)
+
+
+# 自动转发到Kook
+def on_user_info(_, info):
+    if botdata.talk_group:
+        msg = info.content
+        if config.forwards_mcdr_command:
+            for i in botdata.talk_group:
+                send_group_person_msg(f'[{info.player}] {info.content}', i, 1)
+        else:
+            if msg[0:2] != '!!':
+                for i in botdata.talk_group:
+                    send_group_person_msg(f'[{info.player}] {info.content}', i, 1)
+
+
+# 在线玩家检测
+def on_player_joined(_, player, __):
+    global online_players
+    if player not in online_players:
+        online_players.append(player)
+    for i in botdata.talk_group:
+        send_group_person_msg(f'{player} 加入游戏', i, 1)
+
+
+def on_player_left(_, player):
+    global online_players
+    if player in online_players:
+        online_players.remove(player)
+    for i in botdata.talk_group:
+        send_group_person_msg(f'{player} 退出游戏', i, 1)

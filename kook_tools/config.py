@@ -1,8 +1,17 @@
+import string
+import random
 from typing import Dict
 
 from mcdreforged.api.utils.serializer import Serializable
 
 global help_info, admin_help_info, help_private_info, admin_help_private_info, bound_help
+
+
+def create_string_number(n):
+    m = random.randint(1, n)
+    a = "".join([str(random.randint(0, 9)) for _ in range(m)])
+    b = "".join([random.choice(string.ascii_letters) for _ in range(n - m)])
+    return ''.join(random.sample(list(a + b), n))
 
 
 class Commands(Serializable):
@@ -16,6 +25,12 @@ class Commands(Serializable):
     set_talk_group: list = [["set_talk_group", "设置聊天组"], "设置或取消设置为聊天频道"]
     set_command_group: list = [["set_command_group", "设置命令组"], "设置或取消设置为命令频道"]
     bound: list = [["bound", "绑定"], "与 Minecraft ID 绑定"]
+    bound_list: list = [["list", "列表"], "显示绑定列表"]
+    bound_unbound: list = [["unbound", "解绑"], "解除 Player/ID 的绑定"]
+    bound_check: list = [["check", "检查"], "检索绑定成员"]
+    bound_player: list = [["player", "玩家ID"], "玩家ID选择器"]
+    bound_kook: list = [["kook"], "KookID选择器"]
+    list_player: list = [["list", "玩家列表"], "查看在线玩家列表"]
 
 
 class BotMsg(Serializable):
@@ -50,6 +65,22 @@ class BotMsg(Serializable):
     fin_bound_without_whitelist: str = "{} 已在服务器成功绑定{}"
     error_player_name: str = "{} 不合法的用户名！"
     wrong_player_name: str = "{} 不存在的用户名！"
+    start_server: str = "{} 已启动！用时{}秒！"
+    restart_server: str = "{} 核心已重启！"
+    stop_server: str = "{} 核心已关闭！"
+    online_player_info: str = "{} 在线玩家共{}人\n玩家列表: {}"
+    server_not_start: str = "{} 服务器核心未启动！"
+    person_bound_list_error: str = "命令错误！请使用 {} {}"
+    person_bound_unbound_check_error: str = "命令错误！请使用 {} {} {} <ID>"
+    person_bound_list: str = "绑定列表：\n"
+    person_bound_cant_list: str = "还没有人在 {} 绑定"
+    person_bound_unbound_with_whitelist_fin: str = "已删除 {}({}) 的绑定并自动解除了白名单"
+    person_bound_unbound_fin: str = "已删除 {}({}) 的绑定"
+    person_bound_unbound_cant_player: str = "未找到该玩家，该玩家不存在或未绑定！({})"
+    person_bound_check_found: str = "{}({})"
+    person_bound_check_cant_found: str = "无法查询到此人！（{}）"
+    person_bound_help: str = "bound 帮助列表：{}"
+    person_bound_admin_help = "bound 管理员帮助列表：{}"
 
 
 class bot_data(Serializable):
@@ -63,6 +94,11 @@ class Config(Serializable):
     uri: str = "https://www.kookapp.cn"
     api_version: int = 3
     token: str = ""
+    password: str = str(create_string_number(10))
+    main_server_host: str = "0.0.0.0"
+    main_server_port: int = 8080
+    main_websocket_server_host: str = "0.0.0.0"
+    main_websocket_server_port: int = 9090
     command_prefix = "#"
     server_name: str = "Survival Server"
     main_server: bool = True

@@ -4,7 +4,6 @@ import socket
 import time
 import copy
 import re
-from threading import Thread
 
 try:  # 试图导入mysql处理
     import mysql.connector
@@ -15,16 +14,16 @@ import requests
 import websockets
 from mcdreforged.api.all import *
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse, parse_qs
 
 from .config import Config, bot_data, BotMsg, Commands, create_string_number
 from .MySQL_Control import (connect_and_delete_data, connect_and_query_db, connect_and_insert_db,
                             create_table_if_not_exists)
+from .Group_Baby_Server import main as baby_server_main
 
 global __mcdr_server, config, debug_status, stop_status, sn, server_restart, session_id, heart_start, url, pong_back
 global heart_stop, server_start, fin_stop_status, wait_admin, botdata, botmsg, server_list_number, server_list_id
 global botid, botname, data, online_players, commands, wait_list, server_first_start, start_time1, httpd
-global password_group_websocket, address, g_socket_server, g_conn_pool
+global address, g_socket_server, g_conn_pool, id_group_http, group_http_list
 
 global group_help, person_help, admin_person_help, set_server_help, t_and_c_group_help, bound_help, admin_bound_help
 
@@ -122,7 +121,7 @@ async def get_websocket(uri: str) -> None:  # 获取websocket连接
             await asyncio.gather(get_service(websocket), bot_heart(websocket))
         else:
             await asyncio.gather(get_service(websocket))  # 如果两个async同时启动居然苏都不够快，来不及获取第一个包呜呜呜
-            res = get_msg("/user/me")
+            res = get_post_msg("/user/me")
             botid = res['data']['id']
             botname = res['data']['username']
             __mcdr_server.logger.info(f"已登录至机器人{botname}({botid})")
@@ -255,91 +254,52 @@ class MyHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        global password_group_websocket
-        # 解析URL中的查询字符串
-        query = parse_qs(urlparse(self.path).query)
-
-        # 获取参数值
-        password = query.get('password', [''])[0]
-
         # 构造响应
-        self.send_response(200)
+        self.send_response(405)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
-        if password == config.password:
-            password_group_websocket = create_string_number(10)
-            self.wfile.write(bytes(str(password_group_websocket), "utf-8"))
+        self.wfile.write(bytes(f"""<h1>405</h1>
+        <h3>Only Post</h3><p>{config.server_name} Provides</p>""", "utf-8"))
+
+    def do_POST(self):
+        global id_group_http, group_http_list
+        req_datas = self.rfile.read(int(self.headers['content-length']))  # 重点在此步!
+        authorization = self.headers['Authorization']
+        if authorization:
+            if authorization == config.password:
+                id_group_http = create_string_number(10)
+                json_send = {
+                    "code": 200,
+                    "msg": "success",
+                    "data": {
+                        "host": config.main_server_host,
+                        "port": config.main_server_port,
+                        "id": id_group_http
+                    }
+                }
+                far_host = json.loads(req_datas.decode())['host']
+                far_port = json.loads(req_datas.decode())['port']
+                far_uri = f"http://{far_host}:{far_port}"
+                group_http_list[id_group_http] = far_uri
+                print(group_http_list)
+                self.send_response(200)
+            else:
+                json_send = {
+                    "code": 404,
+                    "msg": "can't find password",
+                    "data": {}
+                }
+                self.send_response(404)
         else:
-            self.wfile.write(bytes("STOP", "utf-8"))
-
-
-# -------------------------
-# Group servers Websocket event listener
-# -------------------------
-@new_thread(f"Group Servers Websocket")
-def group_servers_websocket():
-    init()
-    # 新开一个线程，用于接收新连接
-    thread = Thread(target=accept_client)
-    thread.daemon = True
-    thread.start()
-    # 主线程逻辑
-    while True:
-        time.sleep(0.1)
-
-
-def init():
-    global address, g_socket_server, g_conn_pool
-    address = (config.main_websocket_server_host, config.main_websocket_server_port)  # 绑定地址
-    g_socket_server = None  # 负责监听的socket
-    g_conn_pool = {}  # 连接池
-    g_socket_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    g_socket_server.bind(address)
-    g_socket_server.listen(5)  # 最大等待数（有很多人理解为最大连接数，其实是错误的）
-    __mcdr_server.logger.info(f"Websocket服务器已开始等待连接！")
-
-
-# 接收新连接
-def accept_client():
-    while True:
-        client, info = g_socket_server.accept()  # 阻塞，等待客户端连接
-        # 给每个客户端创建一个独立的线程进行管理
-        thread = Thread(target=message_handle, args=(client, info))
-        # 设置成守护线程
-        thread.daemon = True
-        thread.start()
-
-
-# 消息处理
-def message_handle(client, info):
-    client.sendall("connect server successfully!".encode(encoding='utf8'))
-    client_type = ""
-    while True:
-        try:
-            bytes_server = client.recv(1024)
-            msg = bytes_server.decode(encoding='utf8')
-            jd = json.loads(msg)
-            cmd = jd['COMMAND']
-            client_type = jd['client_type']
-            if client_type != password_group_websocket:
-                break
-            if 'CONNECT' == cmd:
-                g_conn_pool[client_type] = client
-                print('on client connect: ' + client_type, info)
-            elif 'SEND_DATA' == cmd:
-                print('recv client msg: ' + client_type, jd['data'])
-        except Exception as e:
-            print(e)
-            remove_client(client_type)
-            break
-
-
-def remove_client(client_type):
-    client = g_conn_pool[client_type]
-    if client is not None:
-        client.close()
-        g_conn_pool.pop(client_type)
-        print("client offline: " + client_type)
+            json_send = {
+                "code": 404,
+                "msg": "Can't find an authorization",
+                "data": {}
+            }
+            self.send_response(404)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(json_send).encode('utf-8'))
 
 
 # -------------------------
@@ -372,19 +332,33 @@ def parse_get_msg(msg) -> dict or str:
 
 
 # 处理Get请求
-def get_msg(msg) -> dict or str:
-    header = {"Authorization": f"Bot {config.token}"}  # 写入token
-    gateway_uri = f"/api/v{str(config.api_version)}"  # 写入api版本
-    # 发送请求
-    get = requests.get(config.uri + gateway_uri + msg, headers=header)
-    # 返回地址
-    if get.text:  # 检查是否回复
-        json_dict = json.loads(get.text)  # 转json字典解析
-        if debug_status:
-            __mcdr_server.logger.info(f"获取到的Get反馈：{json_dict}")
-        return json_dict  # 返回数据
+def get_post_msg(msg, uri_p: str = "", mode: int = 0) -> dict or str:
+    if mode == 0:
+        header = {"Authorization": f"Bot {config.token}"}  # 写入token
+        gateway_uri = f"/api/v{str(config.api_version)}"  # 写入api版本
+        # 发送请求
+        get = requests.get(config.uri + gateway_uri + msg, headers=header)
+        # 返回地址
+        if get.text:  # 检查是否回复
+            json_dict = json.loads(get.text)  # 转json字典解析
+            if debug_status:
+                __mcdr_server.logger.info(f"获取到的Get反馈：{json_dict}")
+            return json_dict  # 返回数据
+        else:
+            return ""
     else:
-        return ""
+        if debug_status:
+            __mcdr_server.logger.info(f"发送Post请求：{msg}")
+        header = {"Authorization": f"Bot {config.token}"}  # 写入token
+        gateway_uri = f"/api/v{str(config.api_version)}"  # 写入api版本
+        post = requests.post(url=config.uri + gateway_uri + uri_p, json=msg, headers=header)
+        if post.text:  # 检查是否回复
+            json_dict = json.loads(post.text)  # 转json字典解析
+            if debug_status:
+                __mcdr_server.logger.info(f"获取到的Post反馈：{json_dict}")
+            return json_dict  # 返回数据
+        else:
+            return ""
 
 
 # 发送消息
@@ -561,7 +535,7 @@ def parse_person_command(msg: str, username: str, userid: str):
             if msg[1] in commands.set_server_list[0]:
                 server_list_id = []
                 server_list_number = 0
-                res = get_msg("/guild/list")
+                res = get_post_msg("/guild/list")
                 if res:
                     if res['code'] == 0:
                         send_group_person_msg(botmsg.found_server_list.format(" / ".join(commands.set_server[0]),
@@ -580,7 +554,7 @@ def parse_person_command(msg: str, username: str, userid: str):
                         for i in already_add_server_list:
                             server_list_number += 1
                             server_list_id.append(i)
-                            res_name = get_msg(f"/guild/view?guild_id={i}")
+                            res_name = get_post_msg(f"/guild/view?guild_id={i}")
                             send_group_person_msg(f"{server_list_number}. {res_name['data']['name']}({i})(已添加)",
                                                   userid,
                                                   0)
@@ -672,7 +646,7 @@ def parse_person_command(msg: str, username: str, userid: str):
                 reply_msg = copy.copy(botmsg.person_bound_list)
                 for i in range(0, len(bound_list)):
                     reply_msg += f'{i + 1}. {bound_list[i]}\n'
-                reply_msg = copy.copy(botmsg.person_bound_cant_list.format(config.server_name)) if reply_msg == '' else\
+                reply_msg = copy.copy(botmsg.person_bound_cant_list.format(config.server_name)) if reply_msg == '' else \
                     reply_msg
                 send_group_person_msg(reply_msg, userid, 0)
             else:
@@ -768,6 +742,15 @@ def turn_msg(userid: str, target_id: str, msg: str, command_talk: bool):
         else:
             send_group_person_msg(botmsg.need_bound.format(f"(met){userid}(met)", " / ".join(commands.bound[0])),
                                   target_id, 1)
+
+
+# 获取可用端口
+def get_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        _, port = s.getsockname()
+    return port
 
 
 # 整合获取用户
@@ -913,7 +896,7 @@ def save_data(server: PluginServerInterface):
 # 插件加载
 def on_load(server: PluginServerInterface, _):
     global __mcdr_server, config, debug_status, stop_status, botdata, botmsg, server_list_number, server_list_id, data
-    global online_players, commands, wait_list, server_first_start, start_time1
+    global online_players, commands, wait_list, server_first_start, start_time1, group_http_list
     # 变量初始化
     start_time1 = time.perf_counter()
     __mcdr_server = server  # 导入mcdr
@@ -929,6 +912,7 @@ def on_load(server: PluginServerInterface, _):
     wait_list = []
     server_first_start = True
     make_help_msg()
+    group_http_list = {}
 
     # 命令初始化
     builder = SimpleCommandBuilder()
@@ -950,7 +934,8 @@ def on_load(server: PluginServerInterface, _):
             __mcdr_server.logger.info("机器人正在启动……")
             start_kook_bot()
             get_server(config.main_server_host, config.main_server_port)
-            group_servers_websocket()
+        else:
+            baby_server_main(config, botdata, botmsg, commands, data)
     elif config.mysql_enable and mysql:  # 启用mysql功能且mysql-connector-python已安装
         MySQL_Control.create_table_if_not_exists("user_list", "id INT AUTO_INCREMENT PRIMARY KEY,kook_id VARCHAR(15),"
                                                               "player_id VARCHAR(20),event_time TIMESTAMP DEFAULT "
@@ -961,7 +946,8 @@ def on_load(server: PluginServerInterface, _):
             __mcdr_server.logger.info("机器人正在启动……")
             start_kook_bot()
             get_server(config.main_server_host, config.main_server_port)
-            group_servers_websocket()
+        else:
+            baby_server_main(config, botdata, botmsg, commands, data)
     elif config.mysql_enable and not mysql:
         __mcdr_server.logger.error("KookTools无法启动，请安装mysql-connector-python或关闭数据库功能！")
 
@@ -970,22 +956,25 @@ def on_load(server: PluginServerInterface, _):
 def on_unload(_):
     global stop_status
     stop_status = True
-    __mcdr_server.logger.info("机器人开始关闭，正在等待关闭成功信号……")
-    while not fin_stop_status:
-        time.sleep(0.5)
+    if config.main_server:
+        get_post_msg("", "/user/offline", 1)
+        __mcdr_server.logger.info("机器人开始关闭，正在等待关闭成功信号……")
+        while not fin_stop_status:
+            time.sleep(0.5)
 
 
 # 自动转发到Kook
 def on_user_info(_, info):
-    if botdata.talk_group:
-        msg = info.content
-        if config.forwards_mcdr_command:
-            for i in botdata.talk_group:
-                send_group_person_msg(f'[{info.player}] {info.content}', i, 1)
-        else:
-            if msg[0:2] != '!!':
+    if info.is_player and botdata.talk_group:
+        if config.main_server:
+            msg = info.content
+            if config.forwards_mcdr_command:
                 for i in botdata.talk_group:
                     send_group_person_msg(f'[{info.player}] {info.content}', i, 1)
+            else:
+                if msg[0:2] != '!!':
+                    for i in botdata.talk_group:
+                        send_group_person_msg(f'[{info.player}] {info.content}', i, 1)
 
 
 # 在线玩家检测

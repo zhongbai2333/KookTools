@@ -97,6 +97,8 @@ class Config(Serializable):
     password: str = str(create_string_number(10))
     main_server_host: str = "0.0.0.0"
     main_server_port: int = 8080
+    baby_server_host: str = "0.0.0.0"
+    baby_server_port: int = 0
     command_prefix = "#"
     server_name: str = "Survival Server"
     main_server: bool = True

@@ -265,9 +265,10 @@ class MyHandler(BaseHTTPRequestHandler):
         global id_group_http, group_http_list
         req_datas = self.rfile.read(int(self.headers['content-length']))  # 重点在此步!
         authorization = self.headers['Authorization']
+        baby_id = self.headers['id']
         if authorization:
             if authorization == config.password:
-                id_group_http = create_string_number(10)
+                id_group_http = create_string_number(8)
                 json_send = {
                     "code": 200,
                     "msg": "success",
@@ -290,10 +291,34 @@ class MyHandler(BaseHTTPRequestHandler):
                     "data": {}
                 }
                 self.send_response(404)
+        elif baby_id:
+            if baby_id in group_http_list.keys():
+                if json.loads(req_datas.decode())['code'] == 1:
+                    json_send = {
+                        "code": 2,
+                        "msg": "PONG",
+                        "data": {}
+                    }
+                    post_baby_server(baby_id, group_http_list[baby_id], 2, "PONG")
+                    self.send_response(200)
+                else:
+                    json_send = {
+                        "code": 404,
+                        "msg": "Unknown Code",
+                        "data": {}
+                    }
+                    self.send_response(404)
+            else:
+                json_send = {
+                    "code": 404,
+                    "msg": "Unknown id",
+                    "data": {}
+                }
+                self.send_response(404)
         else:
             json_send = {
                 "code": 404,
-                "msg": "Can't find an authorization",
+                "msg": "Can't find an authorization or id",
                 "data": {}
             }
             self.send_response(404)
@@ -744,6 +769,21 @@ def turn_msg(userid: str, target_id: str, msg: str, command_talk: bool):
                                   target_id, 1)
 
 
+# 子服POST
+def post_baby_server(id_baby: str, url_baby: str, code: int, msg: str, data_send=None):
+    if data_send is None:
+        data_send = {}
+    header = {"id": f"{id_baby}"}
+    json_send = {
+        "code": code,
+        "msg": msg,
+        "data": data_send
+    }
+    post = requests.post(f"{url_baby}", json=json_send, headers=header)
+    json_dict = json.loads(post.text)  # 转json字典解析
+    return json_dict  # 返回地址
+
+
 # 获取可用端口
 def get_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -935,7 +975,7 @@ def on_load(server: PluginServerInterface, _):
             start_kook_bot()
             get_server(config.main_server_host, config.main_server_port)
         else:
-            baby_server_main(config, botdata, botmsg, commands, data)
+            baby_server_main(config, botdata, botmsg, commands, data, __mcdr_server)
     elif config.mysql_enable and mysql:  # 启用mysql功能且mysql-connector-python已安装
         MySQL_Control.create_table_if_not_exists("user_list", "id INT AUTO_INCREMENT PRIMARY KEY,kook_id VARCHAR(15),"
                                                               "player_id VARCHAR(20),event_time TIMESTAMP DEFAULT "
@@ -947,7 +987,7 @@ def on_load(server: PluginServerInterface, _):
             start_kook_bot()
             get_server(config.main_server_host, config.main_server_port)
         else:
-            baby_server_main(config, botdata, botmsg, commands, data)
+            baby_server_main(config, botdata, botmsg, commands, data, __mcdr_server)
     elif config.mysql_enable and not mysql:
         __mcdr_server.logger.error("KookTools无法启动，请安装mysql-connector-python或关闭数据库功能！")
 

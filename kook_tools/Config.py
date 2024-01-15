@@ -5,6 +5,7 @@ from typing import Dict
 from mcdreforged.api.utils.serializer import Serializable
 
 global help_info, admin_help_info, help_private_info, admin_help_private_info, bound_help
+global config, botdata, botmsg, commands
 
 
 def create_string_number(n):
@@ -83,7 +84,7 @@ class BotMsg(Serializable):
     person_bound_admin_help = "bound 管理员帮助列表：{}"
 
 
-class bot_data(Serializable):
+class BotData(Serializable):
     server_list: list[str] = []
     admins: list[str] = []
     talk_group: list[str] = []
@@ -97,8 +98,8 @@ class Config(Serializable):
     password: str = str(create_string_number(10))
     main_server_host: str = "0.0.0.0"
     main_server_port: int = 8080
-    baby_server_host: str = "0.0.0.0"
-    baby_server_port: int = 0
+    main_websocket_host: str = "0.0.0.0"
+    main_websocket_port: int = 8081
     command_prefix = "#"
     server_name: str = "Survival Server"
     main_server: bool = True
@@ -118,3 +119,20 @@ class Config(Serializable):
         'user': "root",
         'password': "123"
     }
+
+
+# ==========
+# Get Config
+# ==========
+# 获取设置
+def get_config():
+    from .Global_Variable import set_variable, get_variable
+    global config, botdata, botmsg, commands
+    config = get_variable("__mcdr_server").load_config_simple(target_class=Config)
+    botdata = get_variable("__mcdr_server").load_config_simple('botdata.json', target_class=BotData)
+    botmsg = get_variable("__mcdr_server").load_config_simple('botmsg.json', target_class=BotMsg)
+    commands = get_variable("__mcdr_server").load_config_simple('commands.json', target_class=Commands)
+    set_variable("config", config)
+    set_variable("botdata", botdata)
+    set_variable("botmsg", botmsg)
+    set_variable("commands", commands)

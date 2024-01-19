@@ -55,6 +55,7 @@ class KookServer:
                     await self.receive()
             else:
                 self.__mcdr_server.logger.error("Kook Websocket服务器无法启动！")
+                self.finish_quit = 2
 
     async def disconnect(self) -> None:
         if self.ws is not None:

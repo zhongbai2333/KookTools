@@ -182,7 +182,11 @@ def on_unload(_):
     from .Global_Variable import get_variable
     if get_variable("config").main_server:
         kook_server.stop_server()
-        while kook_server.finish_quit != 2:
+        asyncio.run(get_variable('group_server').stop_server())
+        if get_variable('httpd'):
+            get_variable('httpd').shutdown()
+            get_variable('httpd').close_server()
+        while kook_server.finish_quit != 2 and not get_variable('group_server').finish_close:
             time.sleep(1)
     else:
         asyncio.run(get_variable("baby_server").disconnect())

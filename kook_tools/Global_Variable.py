@@ -13,4 +13,7 @@ def set_variable(key, value):
 
 def get_variable(key):
     global all_variable
-    return all_variable[key]
+    if key in all_variable.keys():
+        return all_variable[key]
+    else:
+        return None

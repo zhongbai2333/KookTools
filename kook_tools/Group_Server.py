@@ -23,6 +23,7 @@ def websocket_server():
 
 class GroupServer:
     def __init__(self):
+        self.finish_close = False
         self.broadcast_websocket = set()
         self.websocket = {}
         from .Global_Variable import get_variable
@@ -62,6 +63,11 @@ class GroupServer:
         except (websockets.ConnectionClosedOK, websockets.ConnectionClosedError):
             self.__mcdr_server.logger.info("Group Websocket 已关闭其中一个连接！")
             return None
+
+    async def close_server(self):
+        for i in self.websocket.values():
+            await i.wait_closed()
+        self.finish_close = True
 
     def broadcast(self, msg):
         websockets.broadcast(self.broadcast_websocket, json.dumps(msg))

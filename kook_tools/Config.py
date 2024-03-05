@@ -1,11 +1,8 @@
-import string
 import random
+import string
 from typing import Dict
 
 from mcdreforged.api.utils.serializer import Serializable
-
-global help_info, admin_help_info, help_private_info, admin_help_private_info, bound_help
-global config, botdata, botmsg, commands
 
 
 def create_string_number(n):
@@ -52,7 +49,7 @@ class BotMsg(Serializable):
     already_del_server: str = "{}不是已添加的服务器！"
     add_server_help: str = "命令错误！请使用 {} {} <number>"
     del_server_help: str = "命令错误！请使用 {} {} <number>"
-    at_msg: str = "如果需要添加为聊天组请用 {}，如果需要添加为命令组请用 {}({})"
+    at_msg: str = "如果需要添加为聊天组请用 {}，如果需要添加为命令组请用 {}"
     del_talk_group: str = "已删除此频道({})为聊天组！"
     add_talk_group: str = "已添加此频道({})为聊天组！"
     del_command_group: str = "已删除此频道({})为命令组！"
@@ -84,32 +81,18 @@ class BotMsg(Serializable):
     person_bound_admin_help = "bound 管理员帮助列表：{}"
 
 
-class BotData(Serializable):
-    server_list: list[str] = []
-    admins: list[str] = []
-    talk_group: list[str] = []
-    command_group: str = ""
-
-
-class Config(Serializable):
+class GroupConfig(Serializable):
     uri: str = "https://www.kookapp.cn"
     api_version: int = 3
     token: str = ""
     password: str = str(create_string_number(10))
-    main_server_host: str = "0.0.0.0"
-    main_server_port: int = 8080
-    main_websocket_host: str = "0.0.0.0"
-    main_websocket_port: int = 8081
+    server_host: str = "0.0.0.0"
+    server_port: int = 8080
     command_prefix = "#"
     server_name: str = "Survival Server"
-    main_server: bool = True
     whitelist_add_with_bound: bool = True
     why_no_whitelist: str = ""
     whitelist_path: str = "./server/whitelist.json"
-    whitelist_remove_with_leave: bool = True
-    forwards_mcdr_command: bool = True
-    forwards_server_start_and_stop: bool = True
-    debug: bool = False
     online_mode: bool = True
     mysql_enable: bool = False
     mysql_config: Dict[str, str] = {
@@ -121,18 +104,132 @@ class Config(Serializable):
     }
 
 
-# ==========
-# Get Config
-# ==========
-# 获取设置
+class BabyConfig(Serializable):
+    far_server_host: str = "127.0.0.1"
+    far_server_port: int = 8080
+    password: str = ""
+    server_name: str = "Survival Server"
+    whitelist_path: str = "./server/whitelist.json"
+
+
+class FirstConfig(Serializable):
+    first_start: bool = True
+    main_server: bool = False
+    debug: bool = False
+
+
+class GroupBotData(Serializable):
+    server_seed: str = ""
+    admins: list[str] = []
+    command_group: str = ""
+    talk_groups: list[str] = []
+
+
+class BabyBotData(Serializable):
+    command_group: str = ""
+    talk_groups: list[str] = []
+
+
 def get_config():
-    from .Global_Variable import set_variable, get_variable
-    global config, botdata, botmsg, commands
-    config = get_variable("__mcdr_server").load_config_simple(target_class=Config)
-    botdata = get_variable("__mcdr_server").load_config_simple('botdata.json', target_class=BotData)
-    botmsg = get_variable("__mcdr_server").load_config_simple('botmsg.json', target_class=BotMsg)
-    commands = get_variable("__mcdr_server").load_config_simple('commands.json', target_class=Commands)
-    set_variable("config", config)
-    set_variable("botdata", botdata)
-    set_variable("botmsg", botmsg)
-    set_variable("commands", commands)
+    from .Global_Variable import get_variable, set_variable
+    __mcdr_server = get_variable('__mcdr_server')
+    is_first = __mcdr_server.load_config_simple('isFirst.json', target_class=FirstConfig)
+    set_variable('debug', is_first.debug)
+    set_variable('main_server', is_first.main_server)
+    if is_first.first_start:
+        set_variable('first_start', True)
+    else:
+        if is_first.main_server:
+            config = __mcdr_server.load_config_simple(target_class=GroupConfig)
+            botdata = __mcdr_server.load_config_simple('botData.json', target_class=GroupBotData)
+            botmsg = __mcdr_server.load_config_simple('botMsg.json', target_class=BotMsg)
+            commands = __mcdr_server.load_config_simple('commands.json', target_class=Commands)
+            set_variable('botmsg', botmsg)
+            set_variable('commands', commands)
+        else:
+            config = __mcdr_server.load_config_simple(target_class=BabyConfig)
+            botdata = __mcdr_server.load_config_simple('botData.json', target_class=BabyBotData)
+        set_variable('config', config)
+        set_variable('botdata', botdata)
+
+
+# 添加机器人管理员
+def add_admin(command_s):
+    from .Global_Variable import get_variable, set_variable
+    __mcdr_server = get_variable('__mcdr_server')
+    if str(command_s).split()[0] == 'Console':
+        botdata = get_variable('botdata')
+        if get_variable('debug'):
+            __mcdr_server.logger.info(f"当前管理员列表：{botdata.admins}")
+        if get_variable('wait_admin'):
+            if get_variable('wait_admin') not in botdata.admins:
+                botdata.admins.append(get_variable('wait_admin'))
+                botdata_n = {
+                    "server_seed": botdata.server_seed,
+                    "admins": botdata.admins,
+                    "command_group": botdata.command_group,
+                    "talk_groups": botdata.talk_groups
+                }
+                __mcdr_server.save_config_simple(botdata_n, 'botData.json')
+                botdata = __mcdr_server.load_config_simple('botData.json', target_class=GroupBotData)
+                set_variable('botdata', botdata)
+                __mcdr_server.logger.info("已为其获取Admin权限！")
+                set_variable('wait_admin', None)
+            else:
+                __mcdr_server.logger.info("此玩家已获得 Kook Bot 管理员！")
+                set_variable('wait_admin', None)
+        else:
+            __mcdr_server.logger.info("无玩家正在请求！")
+    else:
+        __mcdr_server.logger.error(f"有非控制台用户({str(command_s).split()[1]})试图获取管理员权限！")
+
+
+# 修改Botdata
+def save_botdata(option: str, input_sth: str, add: bool = False):
+    from .Global_Variable import get_variable, set_variable
+    __mcdr_server = get_variable('__mcdr_server')
+    if get_variable('main_server'):
+        botdata = get_variable("botdata")
+        if option == "command_group":
+            if add:
+                botdata.command_group = input_sth
+            else:
+                botdata.command_group = ""
+        elif option == "talk_groups":
+            if add:
+                botdata.talk_groups.append(input_sth)
+            else:
+                botdata.talk_groups.remove(input_sth)
+        elif option == "server_seed":
+            if add:
+                botdata.server_seed = input_sth
+            else:
+                botdata.server_seed = ""
+        botdata_n = {
+            "server_seed": botdata.server_seed,
+            "admins": botdata.admins,
+            "command_group": botdata.command_group,
+            "talk_groups": botdata.talk_groups
+        }
+        __mcdr_server.save_config_simple(botdata_n, 'botData.json')
+        botdata = __mcdr_server.load_config_simple('botData.json', target_class=GroupBotData)
+        set_variable('botdata', botdata)
+    else:
+        botdata = get_variable("botdata")
+        if option == "command_group":
+            if add:
+                botdata.command_group = input_sth
+            else:
+                botdata.command_group = ""
+        elif option == "talk_groups":
+            if add:
+                botdata.talk_groups.append(input_sth)
+            else:
+                botdata.talk_groups.remove(input_sth)
+        botdata_n = {
+            "command_group": botdata.command_group,
+            "talk_groups": botdata.talk_groups
+        }
+        __mcdr_server.save_config_simple(botdata_n, 'botData.json')
+        botdata = __mcdr_server.load_config_simple('botData.json', target_class=BabyBotData)
+        set_variable('botdata', botdata)
